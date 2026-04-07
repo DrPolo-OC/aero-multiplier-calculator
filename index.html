@@ -15,6 +15,8 @@
     .result { margin-top: 20px; font-size: 1.2em; }
     .chart { margin-top: 40px; }
     .conditions { margin-top: 10px; font-size: 0.9em; color: #555; }
+    .raw-data { font-family: monospace; white-space: pre; background: #f5f5f5; padding: 10px; margin-top: 10px; }
+    .source { font-size: 0.8em; color: #666; margin-top: 5px; }
   </style>
 </head>
 <body>
@@ -32,6 +34,9 @@
   <div class="result" id="result"></div>
   <div class="conditions" id="conditions"></div>
 
+  <div class="raw-data" id="rawData"></div>
+  <div class="source" id="source"></div>
+
   <div class="chart">
     <canvas id="multiplierChart"></canvas>
   </div>
@@ -39,41 +44,10 @@
   <script>
     const SHEET_ID = '1uL3qz2hD4ugLFh1i3_4CuZOzLuF_XL5UgRoUlX_JDq0';
     const DATA_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json`;
+    const SOURCE_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit`;
 
-    let latest = null; // will hold { newEmissions, totalRewards, emissionsValue, multiplier, date }
-
-    async function loadSheet() {
-      try {
-        const resp = await fetch(DATA_URL);
-        const text = await resp.text();
-        // Extract JSON from the response (the response is a JS eval wrapper)
-        const jsonStr = text.match(/google\.visualization\.Query\.setResponse\(([\s\S]*)\);/)[1];
-        const data = JSON.parse(jsonStr);
-        // data.table.rows is array of rows; each row has c: array of cells
-        const rows = data.table.rows;
-        // Take last non-empty row
-        for (let i = rows.length - 1; i >= 0; i--) {
-          const cells = rows[i].c;
-          if (cells && cells.length >= 6) {
-            const ts = cells[0] ? cells[0].v : null;
-            const ne = parseFloat(cells[1] ? cells[1].v : '');
-            const tr = parseFloat(cells[2] ? cells[2].v : '');
-            const ev = parseFloat(cells[4] ? cells[4].v : '');
-            const m = parseFloat(cells[5] ? cells[5].v : '');
-            if (!isNaN(ne) && !isNaN(tr) && !isNaN(ev) && !isNaN(m)) {
-              latest = { date: ts, newEmissions: ne, totalRewards: tr, emissionsValue: ev, multiplier: m };
-              break;
-            }
-          }
-        }
-        if (!latest) throw new Error('No data found');
-        document.getElementById('status').textContent = `Latest data: ${latest.date}`;
-        initChart();
-      } catch (e) {
-        document.getElementById('status').textContent = 'Error loading sheet: ' + e.message;
-        console.error(e);
-      }
-    }
+    let latest = null; // { date, newEmissions, totalRewards, price, emissionsValue, multiplier }
+    let chartInstance = null;
 
     function formatNumber(num) {
       if (num >= 1) {
@@ -83,36 +57,85 @@
       }
     }
 
-    function initChart() {
+    async function loadSheet() {
+      try {
+        const resp = await fetch(DATA_URL);
+        const text = await resp.text();
+        const jsonStr = text.match(/google\.visualization\.Query\.setResponse\(([\s\S]*)\);/)[1];
+        const data = JSON.parse(jsonStr);
+        const rows = data.table.rows;
+        for (let i = rows.length - 1; i >= 0; i--) {
+          const cells = rows[i].c;
+          if (cells && cells.length >= 6) {
+            const ts = cells[0] ? cells[0].v : null;
+            const ne = parseFloat(cells[1] ? cells[1].v : '');
+            const tr = parseFloat(cells[2] ? cells[2].v : '');
+            const ap = parseFloat(cells[3] ? cells[3].v : '');
+            const ev = parseFloat(cells[4] ? cells[4].v : '');
+            const m = parseFloat(cells[5] ? cells[5].v : '');
+            if (!isNaN(ne) && !isNaN(tr) && !isNaN(ap) && !isNaN(ev) && !isNaN(m)) {
+              latest = { date: ts, newEmissions: ne, totalRewards: tr, price: ap, emissionsValue: ev, multiplier: m };
+              break;
+            }
+          }
+        }
+        if (!latest) throw new Error('No data found');
+        document.getElementById('status').textContent = `Latest data: ${latest.date}`;
+        document.getElementById('rawData').textContent =
+`New Emissions: ${latest.newEmissions}
+Total Rewards: ${latest.totalRewards}
+AERO Price: ${latest.price}
+Emissions Value: ${latest.emissionsValue}
+Multiplier: ${latest.multiplier}`;
+        document.getElementById('source').innerHTML = `Source: <a href="${SOURCE_URL}" target="_blank">Multiplier Log (Google Sheet)</a>`;
+        initChart();
+      } catch (e) {
+        document.getElementById('status').textContent = 'Error loading sheet: ' + e.message;
+        console.error(e);
+      }
+    }
+
+    function initChart(selectedIncentive = null) {
       if (!latest) return;
       const ctx = document.getElementById('multiplierChart').getContext('2d');
-      // Generate curve: incentives from 0 to 200k step 1k
       const incentives = [];
       const multipliers = [];
-      for (let inc = 0; inc <= 200000; inc += 1000) {
+      for (let inc = 0; inc <= 200000; inc += 2000) {
         const mult = latest.emissionsValue / (latest.totalRewards + inc);
         incentives.push(inc);
         multipliers.push(mult);
       }
-      new Chart(ctx, {
-        type: 'line',
-        data: {
-          labels: incentives,
-          datasets: [{
-            label: 'Multiplier vs Incentive',
-            data: multipliers,
-            borderColor: 'steelblue',
-            fill: false,
-            pointRadius: 0,
-            spanGaps: true
-          }, {
-            label: '1.1 threshold',
-            data: incentives.map(() => 1.1),
-            borderColor: 'red',
-            borderDash: [5, 5],
-            pointRadius: 0
-          }]
+      const datasets = [
+        {
+          label: 'Multiplier vs Incentive',
+          data: multipliers,
+          borderColor: 'steelblue',
+          fill: false,
+          pointRadius: 0,
+          spanGaps: true
         },
+        {
+          label: '1.1 threshold',
+          data: incentives.map(() => 1.1),
+          borderColor: 'red',
+          borderDash: [5, 5],
+          pointRadius: 0
+        }
+      ];
+      if (selectedIncentive !== null && !isNaN(selectedIncentive)) {
+        const multAtSelected = latest.emissionsValue / (latest.totalRewards + selectedIncentive);
+        datasets.push({
+          label: `Your incentive: $${selectedIncentive.toLocaleString()}`,
+          data: incentives.map(() => multAtSelected),
+          borderColor: 'orange',
+          borderDash: [3, 3],
+          pointRadius: 0
+        });
+      }
+      if (chartInstance) chartInstance.destroy();
+      chartInstance = new Chart(ctx, {
+        type: 'line',
+        data: { labels: incentives, datasets: datasets },
         options: {
           responsive: true,
           plugins: {
@@ -128,11 +151,16 @@
           scales: {
             x: {
               title: { display: true, text: 'Incentive (USD)' },
-              ticks: { callback: v => '$' + v.toLocaleString() }
+              ticks: { 
+                callback: v => '$' + v.toLocaleString(),
+                stepSize: 2000,
+                maxTicksLimit: 11
+              }
             },
             y: {
               title: { display: true, text: 'Multiplier' },
-              min: 0
+              min: 1.0,
+              max: 2.0
             }
           }
         }
@@ -158,12 +186,13 @@
           <strong>Multiplier: ${formatted}×</strong>
         </p>
       `;
-      // Condition message
       if (mult < 1.1) {
         document.getElementById('conditions').innerHTML = '<p style="color: #c00;">⚠️ Multiplier below 1.1 is considered meaningless — no one would incentivize at this level.</p>';
       } else {
         document.getElementById('conditions').innerHTML = '<p style="color: #090;">✅ Multiplier is above the 1.1 threshold.</p>';
       }
+      // Update chart with vertical line
+      initChart(inc);
     }
 
     document.getElementById('calcBtn').addEventListener('click', calculate);
