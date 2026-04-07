@@ -6,21 +6,54 @@
   <title>Aero Multiplier Calculator</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; }
+    :root {
+      --bg: #0f0f0f;
+      --fg: #e0e0e0;
+      --accent: #4a90e2;
+      --card: #1a1a1a;
+      --border: #333;
+      --success: #2e7d32;
+      --warn: #c62828;
+    }
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      max-width: 900px;
+      margin: 40px auto;
+      padding: 20px;
+      background: var(--bg);
+      color: var(--fg);
+    }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    .header h1 { margin: 0; font-size: 1.6em; }
+    .theme-toggle { background: var(--card); border: 1px solid var(--border); color: var(--fg); padding: 8px 12px; border-radius: 6px; cursor: pointer; }
     .status { margin-bottom: 20px; font-weight: bold; }
     .field { margin: 10px 0; }
     label { display: block; margin-bottom: 5px; }
-    input[type="number"] { width: 100%; padding: 8px; font-size: 1em; box-sizing: border-box; }
-    button { padding: 10px 20px; font-size: 1em; margin-top: 5px; }
-    .report { white-space: pre; font-family: monospace; background: #f5f5f5; padding: 15px; margin-top: 10px; font-size: 0.95em; line-height: 1.4; }
-    .source { font-size: 0.9em; color: #666; margin-top: 10px; }
-    .chart { margin-top: 40px; }
-    .conditions { margin-top: 10px; font-size: 0.9em; color: #555; }
-    .user-result { margin-top: 15px; padding: 10px; background: #eef; border-radius: 4px; }
+    input[type="number"] { width: 100%; padding: 10px; font-size: 1em; box-sizing: border-box; background: var(--card); border: 1px solid var(--border); color: var(--fg); border-radius: 6px; }
+    button { padding: 12px 24px; font-size: 1em; background: var(--accent); color: white; border: none; border-radius: 6px; cursor: pointer; margin-top: 5px; }
+    button:hover { opacity: 0.9; }
+    .report { white-space: pre; font-family: 'SF Mono', 'Menlo', monospace; background: var(--card); padding: 15px; margin-top: 10px; font-size: 0.95em; line-height: 1.5; border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; }
+    .source { font-size: 0.9em; color: #aaa; margin-top: 10px; }
+    .source a { color: var(--accent); text-decoration: none; }
+    .source a:hover { text-decoration: underline; }
+    .promo { background: var(--card); border: 1px dashed var(--accent); padding: 12px; margin: 15px 0; border-radius: 8px; text-align: center; }
+    .promo a { color: var(--accent); font-weight: bold; text-decoration: none; }
+    .promo a:hover { text-decoration: underline; }
+    .chart { margin-top: 40px; background: var(--card); padding: 15px; border-radius: 8px; border: 1px solid var(--border); }
+    .conditions { margin-top: 10px; font-size: 0.9em; }
+    .user-result { margin-top: 15px; padding: 12px; background: rgba(74, 144, 226, 0.15); border-radius: 6px; border-left: 4px solid var(--accent); }
+    .legend-note { font-size: 0.8em; color: #888; margin-top: 8px; text-align: center; }
   </style>
 </head>
 <body>
-  <h1>Aero Emission Multiplier Calculator</h1>
+  <div class="header">
+    <h1>Aero Emission Multiplier Calculator</h1>
+    <button class="theme-toggle" id="themeToggle">🌙 Dark</button>
+  </div>
+
+  <div class="promo">
+    📢 Follow <a href="https://t.me/AeroEmissionMultiplier" target="_blank">@AeroEmissionMultiplier</a> on Telegram for daily updates
+  </div>
 
   <div class="status" id="status">Loading latest data...</div>
 
@@ -38,6 +71,7 @@
 
   <div class="chart">
     <canvas id="multiplierChart"></canvas>
+    <div class="legend-note">Orange line: your selected incentive | Red dashed: 1.1 threshold</div>
   </div>
 
   <script>
@@ -105,9 +139,14 @@
 
     function initChart(selectedIncentive) {
       if (!latest) return;
-      // Generate baseline curve (every $2,000 for smoothness)
+      // Goal: find incentive where multiplier = 1.1 => inc = emissionsValue / 1.1 - totalRewards
+      let targetInc = latest.emissionsValue / 1.1 - latest.totalRewards;
+      if (targetInc < 0) targetInc = 200000; // fallback if already above 1.1 at zero
+      // Round up to nearest 10k for a clean axis end
+      const maxInc = Math.max(200000, Math.ceil(targetInc / 10000) * 10000);
+      // Generate points every 2k for smoothness
       const points = [];
-      for (let inc = 0; inc <= 200000; inc += 2000) {
+      for (let inc = 0; inc <= maxInc; inc += 2000) {
         const mult = latest.emissionsValue / (latest.totalRewards + inc);
         points.push({ x: inc, y: mult });
       }
@@ -116,7 +155,7 @@
         {
           label: 'Multiplier',
           data: points,
-          borderColor: 'steelblue',
+          borderColor: '#4a90e2',
           fill: false,
           pointRadius: 0,
           showLine: true
@@ -124,7 +163,7 @@
         {
           label: '1.1 threshold',
           data: points.map(p => ({ x: p.x, y: 1.1 })),
-          borderColor: 'red',
+          borderColor: '#ff6b6b',
           borderDash: [5, 5],
           pointRadius: 0,
           showLine: true
@@ -135,11 +174,11 @@
         datasets.push({
           label: `Your incentive: $${selectedIncentive.toLocaleString()}`,
           data: [{ x: selectedIncentive, y: 1.0 }, { x: selectedIncentive, y: 2.0 }],
-          borderColor: 'orange',
+          borderColor: '#f5a623',
           borderDash: [3, 3],
           pointRadius: 0,
           showLine: true,
-          segment: { borderColor: 'orange' }
+          segment: { borderColor: '#f5a623' }
         });
       }
       if (chartInstance) chartInstance.destroy();
@@ -160,23 +199,27 @@
                 }
               }
             },
-            legend: { position: 'top' }
+            legend: { position: 'top', labels: { color: '#e0e0e0' } }
           },
           scales: {
             x: {
               type: 'linear',
-              title: { display: true, text: 'Incentive (USD)' },
+              title: { display: true, text: 'Incentive (USD)', color: '#e0e0e0' },
               min: 0,
-              max: 200000,
+              max: maxInc,
               ticks: {
-                stepSize: 50000,
-                callback: v => '$' + v.toLocaleString()
-              }
+                stepSize: Math.ceil(maxInc / 5 / 10000) * 10000,
+                callback: v => '$' + v.toLocaleString(),
+                color: '#e0e0e0'
+              },
+              grid: { color: '#333' }
             },
             y: {
-              title: { display: true, text: 'Multiplier' },
+              title: { display: true, text: 'Multiplier', color: '#e0e0e0' },
               min: 1.0,
-              max: 2.0
+              max: 2.0,
+              ticks: { color: '#e0e0e0' },
+              grid: { color: '#333' }
             }
           }
         }
@@ -206,9 +249,9 @@
       `;
       document.getElementById('userResult').innerHTML = userHtml;
       if (mult < 1.1) {
-        document.getElementById('conditions').innerHTML = '<p style="color: #c00;">⚠️ Multiplier below 1.1 is considered meaningless — no one would incentivize at this level.</p>';
+        document.getElementById('conditions').innerHTML = '<p style="color: #ff6b6b;">⚠️ Multiplier below 1.1 is considered meaningless — no one would incentivize at this level.</p>';
       } else {
-        document.getElementById('conditions').innerHTML = '<p style="color: #090;">✅ Multiplier is above the 1.1 threshold.</p>';
+        document.getElementById('conditions').innerHTML = '<p style="color: #4caf50;">✅ Multiplier is above the 1.1 threshold.</p>';
       }
       initChart(inc);
     }
