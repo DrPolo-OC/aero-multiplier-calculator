@@ -7,16 +7,16 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; }
-    .status { margin-bottom: 20px; }
+    .status { margin-bottom: 20px; font-weight: bold; }
     .field { margin: 10px 0; }
     label { display: block; margin-bottom: 5px; }
-    input[type="number"] { width: 100%; padding: 8px; font-size: 1em; }
-    button { padding: 10px 20px; font-size: 1em; }
-    .result { margin-top: 20px; font-size: 1.2em; }
+    input[type="number"] { width: 100%; padding: 8px; font-size: 1em; box-sizing: border-box; }
+    button { padding: 10px 20px; font-size: 1em; margin-top: 5px; }
+    .report { white-space: pre; font-family: monospace; background: #f5f5f5; padding: 15px; margin-top: 10px; font-size: 0.95em; line-height: 1.4; }
+    .source { font-size: 0.9em; color: #666; margin-top: 10px; }
     .chart { margin-top: 40px; }
     .conditions { margin-top: 10px; font-size: 0.9em; color: #555; }
-    .raw-data { font-family: monospace; white-space: pre; background: #f5f5f5; padding: 10px; margin-top: 10px; }
-    .source { font-size: 0.8em; color: #666; margin-top: 5px; }
+    .user-result { margin-top: 15px; padding: 10px; background: #eef; border-radius: 4px; }
   </style>
 </head>
 <body>
@@ -24,18 +24,17 @@
 
   <div class="status" id="status">Loading latest data...</div>
 
+  <div class="report" id="report"></div>
+  <div class="source" id="source"></div>
+
   <div class="field">
-    <label for="incentive">Incentive Amount (USD)</label>
+    <label for="incentive">Add Incentive (USD)</label>
     <input type="number" id="incentive" placeholder="Enter additional incentives in USD" min="0" step="1000">
   </div>
-
   <button id="calcBtn">Calculate</button>
 
-  <div class="result" id="result"></div>
   <div class="conditions" id="conditions"></div>
-
-  <div class="raw-data" id="rawData"></div>
-  <div class="source" id="source"></div>
+  <div class="user-result" id="userResult" style="display:none;"></div>
 
   <div class="chart">
     <canvas id="multiplierChart"></canvas>
@@ -46,15 +45,29 @@
     const DATA_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json`;
     const SOURCE_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit`;
 
-    let latest = null; // { date, newEmissions, totalRewards, price, emissionsValue, multiplier }
+    let latest = null;
     let chartInstance = null;
 
-    function formatNumber(num) {
+    function formatTelegramNumber(num, decimals) {
       if (num >= 1) {
-        return num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      } else {
-        return num.toFixed(4);
+        return num.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
       }
+      return num.toFixed(decimals);
+    }
+
+    function buildTelegramReport(data) {
+      const ne = formatTelegramNumber(data.newEmissions, 2);
+      const tr = formatTelegramNumber(data.totalRewards, 2);
+      const price = formatTelegramNumber(data.price, 4);
+      const ev = formatTelegramNumber(data.emissionsValue, 2);
+      const mult = formatTelegramNumber(data.multiplier, 2);
+      let msg = `📊 Aerodrome Multiplier Report — ${data.date}\n\nCurrent Stats:\n• New Emissions: ${ne} AERO\n• Total Rewards: $${tr}\n• AERO Price: $${price}\n• Emissions Value: $${ev}\n\n🎯 Current Multiplier: ${mult}×\n(Emission value ÷ Total Rewards)\n\n📈 Simulated Multipliers (added incentives):\n`;
+      [1000, 25000, 50000, 100000].forEach(inc => {
+        const sim = formatTelegramNumber(data.emissionsValue / (data.totalRewards + inc), 2);
+        msg += ` +$${inc.toLocaleString()} → ${sim}×\n`;
+      });
+      msg += `\nNote: Adding incentives increases total rewards while emissions stay fixed, so multiplier decreases.`;
+      return msg;
     }
 
     async function loadSheet() {
@@ -81,68 +94,69 @@
         }
         if (!latest) throw new Error('No data found');
         document.getElementById('status').textContent = `Latest data: ${latest.date}`;
-        document.getElementById('rawData').textContent =
-`New Emissions: ${latest.newEmissions}
-Total Rewards: ${latest.totalRewards}
-AERO Price: ${latest.price}
-Emissions Value: ${latest.emissionsValue}
-Multiplier: ${latest.multiplier}`;
+        document.getElementById('report').textContent = buildTelegramReport(latest);
         document.getElementById('source').innerHTML = `Source: <a href="${SOURCE_URL}" target="_blank">Multiplier Log (Google Sheet)</a>`;
-        initChart();
+        initChart(null);
       } catch (e) {
         document.getElementById('status').textContent = 'Error loading sheet: ' + e.message;
         console.error(e);
       }
     }
 
-    function initChart(selectedIncentive = null) {
+    function initChart(selectedIncentive) {
       if (!latest) return;
-      const ctx = document.getElementById('multiplierChart').getContext('2d');
-      const incentives = [];
-      const multipliers = [];
+      // Generate baseline curve (every $2,000 for smoothness)
+      const points = [];
       for (let inc = 0; inc <= 200000; inc += 2000) {
         const mult = latest.emissionsValue / (latest.totalRewards + inc);
-        incentives.push(inc);
-        multipliers.push(mult);
+        points.push({ x: inc, y: mult });
       }
+      const ctx = document.getElementById('multiplierChart').getContext('2d');
       const datasets = [
         {
-          label: 'Multiplier vs Incentive',
-          data: multipliers,
+          label: 'Multiplier',
+          data: points,
           borderColor: 'steelblue',
           fill: false,
           pointRadius: 0,
-          spanGaps: true
+          showLine: true
         },
         {
           label: '1.1 threshold',
-          data: incentives.map(() => 1.1),
+          data: points.map(p => ({ x: p.x, y: 1.1 })),
           borderColor: 'red',
           borderDash: [5, 5],
-          pointRadius: 0
+          pointRadius: 0,
+          showLine: true
         }
       ];
-      if (selectedIncentive !== null && !isNaN(selectedIncentive)) {
-        const multAtSelected = latest.emissionsValue / (latest.totalRewards + selectedIncentive);
+      if (selectedIncentive != null && !isNaN(selectedIncentive)) {
+        const m = latest.emissionsValue / (latest.totalRewards + selectedIncentive);
         datasets.push({
           label: `Your incentive: $${selectedIncentive.toLocaleString()}`,
-          data: incentives.map(() => multAtSelected),
+          data: [{ x: selectedIncentive, y: 1.0 }, { x: selectedIncentive, y: 2.0 }],
           borderColor: 'orange',
           borderDash: [3, 3],
-          pointRadius: 0
+          pointRadius: 0,
+          showLine: true,
+          segment: { borderColor: 'orange' }
         });
       }
       if (chartInstance) chartInstance.destroy();
       chartInstance = new Chart(ctx, {
         type: 'line',
-        data: { labels: incentives, datasets: datasets },
+        data: { datasets: datasets },
         options: {
           responsive: true,
           plugins: {
             tooltip: {
               callbacks: {
-                label: function(context) {
-                  return `Incentive: $${context.parsed.x.toLocaleString()} → Multiplier: ${context.parsed.y.toFixed(4)}`;
+                label: ctx => {
+                  const { x, y } = ctx.raw;
+                  if (ctx.dataset.label.includes('Your incentive')) {
+                    return `Incentive: $${x.toLocaleString()} → Multiplier: ${y.toFixed(4)}`;
+                  }
+                  return `Incentive: $${x.toLocaleString()} → Multiplier: ${y.toFixed(4)}`;
                 }
               }
             },
@@ -150,11 +164,13 @@ Multiplier: ${latest.multiplier}`;
           },
           scales: {
             x: {
+              type: 'linear',
               title: { display: true, text: 'Incentive (USD)' },
-              ticks: { 
-                callback: v => '$' + v.toLocaleString(),
-                stepSize: 2000,
-                maxTicksLimit: 11
+              min: 0,
+              max: 200000,
+              ticks: {
+                stepSize: 50000,
+                callback: v => '$' + v.toLocaleString()
               }
             },
             y: {
@@ -177,21 +193,23 @@ Multiplier: ${latest.multiplier}`;
         alert('Enter a valid incentive amount');
         return;
       }
-      const mult = latest.emissionsValue / (latest.totalRewards + inc);
-      const formatted = formatNumber(mult);
-      document.getElementById('result').innerHTML = `
-        <p>
-          Emissions Value: $${formatNumber(latest.emissionsValue)}<br>
-          Total Rewards + Incentive: $${formatNumber(latest.totalRewards + inc)}<br>
-          <strong>Multiplier: ${formatted}×</strong>
-        </p>
+      const totalWithInc = latest.totalRewards + inc;
+      const mult = latest.emissionsValue / totalWithInc;
+      const multFmt = formatTelegramNumber(mult, 2);
+      const evFmt = formatTelegramNumber(latest.emissionsValue, 2);
+      const trFmt = formatTelegramNumber(totalWithInc, 2);
+      const userHtml = `
+        <strong>With $${inc.toLocaleString()} added:</strong><br>
+        Emissions Value: $${evFmt}<br>
+        Total Rewards + Incentive: $${trFmt}<br>
+        <strong>Multiplier: ${multFmt}×</strong>
       `;
+      document.getElementById('userResult').innerHTML = userHtml;
       if (mult < 1.1) {
         document.getElementById('conditions').innerHTML = '<p style="color: #c00;">⚠️ Multiplier below 1.1 is considered meaningless — no one would incentivize at this level.</p>';
       } else {
         document.getElementById('conditions').innerHTML = '<p style="color: #090;">✅ Multiplier is above the 1.1 threshold.</p>';
       }
-      // Update chart with vertical line
       initChart(inc);
     }
 
