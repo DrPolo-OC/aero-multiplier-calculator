@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aero Multiplier Calculator</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; }
+    .status { margin-bottom: 20px; }
+    .field { margin: 10px 0; }
+    label { display: block; margin-bottom: 5px; }
+    input[type="number"] { width: 100%; padding: 8px; font-size: 1em; }
+    button { padding: 10px 20px; font-size: 1em; }
+    .result { margin-top: 20px; font-size: 1.2em; }
+    .chart { margin-top: 40px; }
+    .conditions { margin-top: 10px; font-size: 0.9em; color: #555; }
+  </style>
+</head>
+<body>
+  <h1>Aero Emission Multiplier Calculator</h1>
+
+  <div class="status" id="status">Loading latest data...</div>
+
+  <div class="field">
+    <label for="incentive">Incentive Amount (USD)</label>
+    <input type="number" id="incentive" placeholder="Enter additional incentives in USD" min="0" step="1000">
+  </div>
+
+  <button id="calcBtn">Calculate</button>
+
+  <div class="result" id="result"></div>
+  <div class="conditions" id="conditions"></div>
+
+  <div class="chart">
+    <canvas id="multiplierChart"></canvas>
+  </div>
+
+  <script>
+    const SHEET_ID = '1uL3qz2hD4ugLFh1i3_4CuZOzLuF_XL5UgRoUlX_JDq0';
+    const DATA_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json`;
+
+    let latest = null; // will hold { newEmissions, totalRewards, emissionsValue, multiplier, date }
+
+    async function loadSheet() {
+      try {
+        const resp = await fetch(DATA_URL);
+        const text = await resp.text();
+        // Extract JSON from the response (the response is a JS eval wrapper)
+        const jsonStr = text.match(/google\.visualization\.Query\.setResponse\(([\s\S]*)\);/)[1];
+        const data = JSON.parse(jsonStr);
+        // data.table.rows is array of rows; each row has c: array of cells
+        const rows = data.table.rows;
+        // Take last non-empty row
+        for (let i = rows.length - 1; i >= 0; i--) {
+          const cells = rows[i].c;
+          if (cells && cells.length >= 6) {
+            const ts = cells[0] ? cells[0].v : null;
+            const ne = parseFloat(cells[1] ? cells[1].v : '');
+            const tr = parseFloat(cells[2] ? cells[2].v : '');
+            const ev = parseFloat(cells[4] ? cells[4].v : '');
+            const m = parseFloat(cells[5] ? cells[5].v : '');
+            if (!isNaN(ne) && !isNaN(tr) && !isNaN(ev) && !isNaN(m)) {
+              latest = { date: ts, newEmissions: ne, totalRewards: tr, emissionsValue: ev, multiplier: m };
+              break;
+            }
+          }
+        }
+        if (!latest) throw new Error('No data found');
+        document.getElementById('status').textContent = `Latest data: ${latest.date}`;
+        initChart();
+      } catch (e) {
+        document.getElementById('status').textContent = 'Error loading sheet: ' + e.message;
+        console.error(e);
+      }
+    }
+
+    function formatNumber(num) {
+      if (num >= 1) {
+        return num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      } else {
+        return num.toFixed(4);
+      }
+    }
+
+    function initChart() {
+      if (!latest) return;
+      const ctx = document.getElementById('multiplierChart').getContext('2d');
+      // Generate curve: incentives from 0 to 200k step 1k
+      const incentives = [];
+      const multipliers = [];
+      for (let inc = 0; inc <= 200000; inc += 1000) {
+        const mult = latest.emissionsValue / (latest.totalRewards + inc);
+        incentives.push(inc);
+        multipliers.push(mult);
+      }
+      new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: incentives,
+          datasets: [{
+            label: 'Multiplier vs Incentive',
+            data: multipliers,
+            borderColor: 'steelblue',
+            fill: false,
+            pointRadius: 0,
+            spanGaps: true
+          }, {
+            label: '1.1 threshold',
+            data: incentives.map(() => 1.1),
+            borderColor: 'red',
+            borderDash: [5, 5],
+            pointRadius: 0
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  return `Incentive: $${context.parsed.x.toLocaleString()} → Multiplier: ${context.parsed.y.toFixed(4)}`;
+                }
+              }
+            },
+            legend: { position: 'top' }
+          },
+          scales: {
+            x: {
+              title: { display: true, text: 'Incentive (USD)' },
+              ticks: { callback: v => '$' + v.toLocaleString() }
+            },
+            y: {
+              title: { display: true, text: 'Multiplier' },
+              min: 0
+            }
+          }
+        }
+      });
+    }
+
+    function calculate() {
+      if (!latest) {
+        alert('Data not loaded yet.');
+        return;
+      }
+      const inc = parseFloat(document.getElementById('incentive').value);
+      if (isNaN(inc) || inc < 0) {
+        alert('Enter a valid incentive amount');
+        return;
+      }
+      const mult = latest.emissionsValue / (latest.totalRewards + inc);
+      const formatted = formatNumber(mult);
+      document.getElementById('result').innerHTML = `
+        <p>
+          Emissions Value: $${formatNumber(latest.emissionsValue)}<br>
+          Total Rewards + Incentive: $${formatNumber(latest.totalRewards + inc)}<br>
+          <strong>Multiplier: ${formatted}×</strong>
+        </p>
+      `;
+      // Condition message
+      if (mult < 1.1) {
+        document.getElementById('conditions').innerHTML = '<p style="color: #c00;">⚠️ Multiplier below 1.1 is considered meaningless — no one would incentivize at this level.</p>';
+      } else {
+        document.getElementById('conditions').innerHTML = '<p style="color: #090;">✅ Multiplier is above the 1.1 threshold.</p>';
+      }
+    }
+
+    document.getElementById('calcBtn').addEventListener('click', calculate);
+    loadSheet();
+  </script>
+</body>
+</html>
